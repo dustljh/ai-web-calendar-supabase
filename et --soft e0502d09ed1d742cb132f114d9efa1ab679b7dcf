@@ -1,0 +1,182 @@
+[33m9417b12[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m wer
+[33m86797a2[m wer
+[33m2394c1f[m wer
+[33m67df3b7[m qwe
+[33mecc75ed[m wer
+[33mda96e0e[m qwe
+[33mbea6a06[m qwe
+[33m31a220a[m qwe
+[33mf0e71fb[m qwe
+[33m8a2fa6f[m qwe
+[33mc1590a3[m qwe
+[33md097ef8[m qwe
+[33mdb33cb3[m qwe
+[33m1e5ffbc[m qwe
+[33m2aa856b[m QWe
+[33ma9ce80b[m qwe
+[33m18d9950[m qwe
+[33m1560079[m qwe
+[33mf81c6f4[m wqe
+[33m4d98f64[m qweqw
+[33m5a26cfd[m qwe
+[33m93d1eb8[m sad
+[33m6df91cf[m asd
+[33mf171b91[m qweqwe
+[33m06f9048[m qwe
+[33m2f3c577[m asd
+[33m41a0a14[m qwe
+[33m296ac06[m qwe
+[33m93bd01e[m wqe
+[33ma606a7f[m qwe
+[33m1b91c08[m asd
+[33m45f4f20[m qwe
+[33m1a321de[m weq
+[33m9d9653c[m qwe
+[33m3827e94[m qwe
+[33meeb1333[m wqe
+[33m9adfb02[m asd
+[33mb5c7957[m qwe
+[33m23cd389[m wqe
+[33mf947b10[m w
+[33me51e9e2[m w
+[33m68ef572[m qwe
+[33m85ab00a[m w
+[33m05702a0[m s
+[33m13470e8[m e
+[33mf25ccf5[m w
+[33mac3e580[m w
+[33mdda1fb0[m w
+[33mfff0874[m qw
+[33mb706ec5[m w
+[33m72c72c8[m wq
+[33m71e7de8[m w
+[33mdfe63d4[m w
+[33mc07562c[m w
+[33m7e7b756[m w
+[33m646ff53[m d
+[33me747a42[m w
+[33mefbfee8[m w
+[33mde6c988[m w
+[33mfe048f0[m fix: mobile layout
+[33m04f7040[m qwe
+[33m57e72f1[m w
+[33m5adc4e8[m w
+[33m370ac0f[m qwe
+[33ma5600f5[m dsad
+[33mb30a2e3[m qw
+[33m51842ea[m e
+[33m0be9a75[m qew
+[33m3f7ab75[m fis
+[33m35b0021[m qwe
+[33m2c18ba9[m w
+[33ma186e21[m w
+[33m9b9faa1[m fix: aiComent
+[33ma4dd001[m fix: map off
+[33m41d7825[m fix: map off
+[33mcda7e70[m insert: comment, weather, url
+[33m00b05db[m fix:ItineraryMap
+[33m7e67275[m fix: prompt
+[33m460b1cd[m fix: ItineraryMap
+[33maaed7ee[m fix: travelMode
+[33m9e3b82d[m fix: travelMode
+[33m2086c7d[m fix: ItineraryMap
+[33m4880c9d[m fix: key
+[33ma574dce[m fix: Directions API
+[33m619ea63[m insert: DirectionsService
+[33m60e28f7[m insert: sortedPlaces
+[33m0e882fc[m fix: AI prompt
+[33m20bf4f1[m fix: lat,lon
+[33mfc6d2af[m fix: AI prompt
+[33m0b5e535[m fix: delete navigate
+[33mc5a28f7[m fix: session, messages delete
+[33m47c63ab[m fix: session-delete
+[33mee8c5e2[m fix: session-delete
+[33m14b3678[m fix: code refactoring
+[33m42351b8[m fix SQL table
+[33mdfb67a8[m fix: SQL table
+[33m6cb2684[m fix SQL table
+[33m3985cf6[m fix: SQL table
+[33md8b1f66[m fix: drop session
+[33m3041826[m fix: drop session
+[33m212e174[m fix: drop session
+[33medc9111[m fix: SQL table
+[33m89db2dc[m update: add guide
+[33mcf89f39[m update: add guide
+[33mc75c0e1[m update: add guide
+[33m765eae4[m update: add guide
+[33mb667364[m update: add guide
+[33m2c547c0[m fix: MyPage casing
+[33m1957230[m fis: comment
+[33mb39ceb5[m fix: file name
+[33m0a34c04[m fix: myPage
+[33mc6775c9[m fix: myPage route
+[33mba0562e[m fix: text cleanup
+[33m1a0a74a[m fix: prompt
+[33me6eb0e0[m fix: ai client
+[33mb74fb0d[m fix: chat response
+[33m5465404[m fix: font
+[33m5a2941e[m ,
+[33mcaf2121[m d
+[33m2f37a5c[m .
+[33m58d07c5[m w
+[33m3c8787f[m fix route
+[33md738bf0[m fix: map
+[33m3c2dbff[m fix: chat text
+[33mf4ca8e6[m fix: map
+[33m993137d[m fix: map
+[33mf72140f[m fix: map
+[33m60729ad[m fix: place index
+[33m06168cc[m fix: plane date
+[33m20f0c3e[m fix: chat index
+[33m10b62d8[m fix: not place
+[33m1515b30[m fix: isSinglePlace
+[33m3d158e8[m fix: ai Messeage
+[33m58724a5[m fix: chat_prompt
+[33mab180aa[m fix: chat session select
+[33m440175b[m fix: message save
+[33md6cf26e[m fix: chat response
+[33m7a268e8[m fix: chat icon
+[33m33c1755[m fix: place index
+[33m15e2a2a[m fix: font size
+[33m5100123[m fix: font size
+[33m7696fe0[m fix: save-session delete
+[33m5fdf3bd[m fix: zustand session delete
+[33m69ef1ac[m fix: session delete
+[33mc5095c2[m fix: session delete
+[33mc812bb6[m fix: gemini-2.5-flash
+[33m3219d2f[m fix: gemini-2.0-flash
+[33m7374988[m fix: migrate to google-genai sdk
+[33mbf28e48[m python-3.11.9
+[33ma69c360[m fix: set python version 3.11
+[33me5da43b[m fix: update gemini google search tool
+[33m0ae9332[m insert: google-generativeai~
+[33mbd2d954[m fix: gemini
+[33m8d642ff[m update: rule
+[33m443d88c[m update: rule
+[33mcc91250[m update: rule
+[33m3beb63e[m fix rule
+[33m77dc0b1[m insert: if One place
+[33m4084ad9[m update: comment
+[33me1081e1[m insert: keywords
+[33mf5d8fa8[m fix: fetch address
+[33m63203bc[m fix render routing
+[33md4676f2[m fix
+[33m09591b2[m fix: fetch
+[33med9896e[m fix
+[33mf254225[m fix: basename
+[33m953b754[m fix
+[33mb6719d1[m fix build
+[33m125c923[m fix
+[33m626277f[m insert: openai 추가
+[33m9565737[m insert: text
+[33m99f73ad[m insert: requirements.txt
+[33m3c21d5e[m fix: vercel router
+[33m10f2d03[m fix: vercel router
+[33mdd89c5d[m fix: vercel
+[33m484634c[m C:/Program Files/Git/
+[33mc97302e[m fix: set basename for React Router
+[33m32ddcfe[m fix: match base path to actual repo name
+[33m5f6f310[m Merge branch 'main' of https://github.com/dustljh/ai-web-calendar-supabase
+[33m748f461[m fix: update base path to match repo name
+[33mb4ad830[m Update vite.config.ts
+[33me0502d0[m fix supabase
