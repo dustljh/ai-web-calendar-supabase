@@ -355,7 +355,6 @@ async def delete_chat_session(request: DeleteSessionRequest):
 
             print("AI PLACES DELETE:", place_delete.data)
 
-        # 3. 메시지 삭제
         msg_delete = supabase.table("chat_messages") \
             .delete() \
             .eq("session_id", session_id) \
@@ -363,7 +362,6 @@ async def delete_chat_session(request: DeleteSessionRequest):
 
         print("CHAT MESSAGES DELETE:", msg_delete.data)
 
-        # 4. 세션 삭제
         session_delete = supabase.table("chat_sessions") \
             .delete() \
             .eq("id", session_id) \
@@ -560,8 +558,115 @@ async def generate_itinerary(request: ChatRequest):
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
     after_3days = (now + timedelta(days=2)).strftime("%Y-%m-%d")
-
     session_id = request.session_id
+
+    # 오류 수정: 프론트 입력값은 그대로 두고, 백엔드 내부에서만 AI 분류/생성/검증 단계를 분리
+    def extract_json(raw_content: str):
+        try:
+            return json.loads(raw_content)
+        except Exception:
+            start = raw_content.find("{")
+            end = raw_content.rfind("}")
+
+            if start == -1 or end == -1:
+                raise ValueError("JSON 없음")
+
+            return json.loads(raw_content[start:end + 1])
+
+    # 오류 수정: Gemini JSON 응답을 강제하고, 실패 시 기존 중괄호 추출 방식으로 한 번 더 복구
+    def generate_json(prompt_text: str, max_tokens: int = 12000):
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt_text,
+            config={
+                "temperature": 0.2,
+                "max_output_tokens": max_tokens,
+                "response_mime_type": "application/json"
+            }
+        )
+
+        raw_content = response.text or ""
+
+        if not raw_content:
+            raise ValueError("Gemini가 빈 응답을 반환했습니다.")
+
+        return extract_json(raw_content)
+
+    def normalize_ai_data(ai_data: dict):
+        places = ai_data.get("planPlaces") or []
+
+        if not isinstance(places, list):
+            places = []
+
+        normalized_places = []
+
+        for place in places:
+            if not isinstance(place, dict):
+                continue
+
+            normalized_places.append({
+                "title": str(place.get("title") or "").strip(),
+                "date": str(place.get("date") or "").strip(),
+                "latitude": place.get("latitude") or 0.0,
+                "longitude": place.get("longitude") or 0.0,
+                "time": str(place.get("time") or "").strip(),
+                "description": str(place.get("description") or "").strip(),
+                "url": str(place.get("url") or "").strip()
+            })
+
+        return {
+            "planName": ai_data.get("planName") or "여행 계획",
+            "planDate": ai_data.get("planDate") or "",
+            "planContent": ai_data.get("planContent") or "",
+            "weather": ai_data.get("weather") or "",
+            "planPlaces": normalized_places
+        }
+
+    def save_ai_message(ai_data: dict):
+        ai_msg_res = supabase.table("chat_messages").insert({
+            "session_id": session_id,
+            "role": "ai",
+            "plan_name": ai_data["planName"],
+            "plan_date": ai_data["planDate"],
+            "plan_content": ai_data["planContent"],
+            "weather": ai_data["weather"]
+        }).execute()
+
+        if not ai_msg_res.data:
+            raise Exception("chat_messages insert 실패")
+
+        message_id = ai_msg_res.data[0]["id"]
+        places_data = []
+
+        for p in ai_data["planPlaces"]:
+            try:
+                image_url = get_place_image_url(p.get("title", ""))
+                p["imageUrl"] = image_url
+
+                places_data.append({
+                    "message_id": message_id,
+                    "title": p.get("title", ""),
+                    "date": p.get("date", today_str),
+                    "latitude": float(p.get("latitude") or 0.0),
+                    "longitude": float(p.get("longitude") or 0.0),
+                    "time": p.get("time", ""),
+                    "description": p.get("description", ""),
+                    "url": p.get("url", ""),
+                    "image_url": image_url
+                })
+
+            except Exception as place_error:
+                print("PLACE ERROR:", str(place_error))
+                continue
+
+        if places_data:
+            supabase.table("ai_places").insert(places_data).execute()
+
+        supabase.table("chat_sessions").update({
+            "title": ai_data["planName"]
+        }).eq("id", session_id).execute()
+
+        return message_id
 
     try:
         session_res = supabase.table("chat_sessions") \
@@ -570,7 +675,6 @@ async def generate_itinerary(request: ChatRequest):
             .execute()
 
         if not session_res.data:
-
             user_res = supabase.table("users") \
                 .select("user_id") \
                 .eq("email", request.user_email) \
@@ -584,58 +688,7 @@ async def generate_itinerary(request: ChatRequest):
                 "title": "새 채팅"
             }).execute()
 
-        single_place_keywords = [
-            "하나", "한 곳", "1곳", "한군데", "한 군데",
-            "추천", "추천해줘", "추천좀", "알려줘",
-            "카페", "맛집", "명소", "술집", "식당",
-            "레스토랑", "빵집", "베이커리", "디저트",
-            "공원", "해수욕장", "바다", "산",
-            "전시", "박물관", "미술관",
-            "국밥", "삼겹살", "치킨", "피자",
-            "초밥", "라멘", "우동", "돈까스",
-            "브런치", "커피", "와인", "맥주",
-            "핫플", "관광지", "랜드마크"
-        ]
-
-        duration_keywords = [
-            "1박", "2박", "3박", "4박",
-            "1일", "2일", "3일", "4일",
-            "여행", "일정", "플랜", "코스",
-            "루트", "동선", "숙소",
-            "호텔", "펜션", "게스트하우스",
-            "체크인", "체크아웃",
-            "당일", "당일치기",
-            "주말", "휴가", "연휴",
-            "며칠", "일주일",
-            "짜줘", "계획"
-        ]
-
-        chat_keywords = [
-            "안녕", "하이", "반가워", "뭐해",
-            "심심해", "배고파", "졸려",
-            "피곤해", "오늘", "ㅋㅋ", "ㅎㅎ",
-            "너 누구야", "대화", "잡담",
-            "이야기", "추천 말고",
-            "그냥", "야"
-        ]
-
         user_message = request.user_message.strip()
-
-        edit_keywords = [
-            "바꿔줘",
-            "변경해줘",
-            "교체해줘",
-            "대신",
-            "말고",
-            "빼고",
-            "수정해줘"
-        ]
-
-        #오류 수정: 사용자 메시지 생성 후 수정 요청 판별
-        is_edit_request = any(
-            k in user_message
-            for k in edit_keywords
-        )
 
         supabase.table("chat_messages").insert({
             "session_id": session_id,
@@ -645,14 +698,13 @@ async def generate_itinerary(request: ChatRequest):
             "plan_content": user_message
         }).execute()
 
-
         history_res = supabase.table("chat_messages") \
             .select("*") \
             .eq("session_id", session_id) \
             .order("created_at") \
             .limit(8) \
             .execute()
-        
+
         conversation_history = ""
 
         for msg in history_res.data:
@@ -660,7 +712,95 @@ async def generate_itinerary(request: ChatRequest):
             content = msg.get("plan_content") or ""
             conversation_history += f"{role}: {content}\n"
 
-        if is_edit_request:
+        # 오류 수정: 키워드만으로 분기하지 않고 AI가 요청 유형을 먼저 분류해서 애매한 문장 처리 정확도 개선
+        classifier_prompt = f"""
+        너는 여행 서비스 요청 분류기다.
+        반드시 JSON만 출력한다.
+
+        분류 타입:
+        - CHAT: 단순 대화, 인사, 여행과 무관한 말
+        - TRIP: 날짜/기간/코스/일정/동선이 필요한 여행 계획 요청
+        - SINGLE_PLACE: 장소 1개만 추천 요청
+        - PLACE_RECOMMEND: 날짜 없는 여러 장소 추천 요청
+        - EDIT_TRIP: 기존 일정에서 장소/날짜/조건을 바꾸는 요청
+
+        판단 규칙:
+        - "바꿔", "대신", "빼고", "말고", "교체", "수정"이 있고 기존 일정 문맥이 있으면 EDIT_TRIP
+        - "3박 4일", "당일치기", "일정", "코스", "루트", "짜줘"는 TRIP
+        - "하나", "한 곳", "1곳"과 "추천"이 같이 있으면 SINGLE_PLACE
+        - "맛집 추천", "카페 추천", "명소 추천"처럼 날짜가 없고 여러 개 추천이면 PLACE_RECOMMEND
+
+        출력 형식:
+        {{
+          "type": "TRIP"
+        }}
+
+        [이전 대화]
+        {conversation_history}
+
+        [현재 사용자 메시지]
+        {user_message}
+        """
+
+        try:
+            intent_data = generate_json(classifier_prompt, max_tokens=1000)
+            request_type = intent_data.get("type", "TRIP")
+        except Exception as classify_error:
+            print("CLASSIFY ERROR:", str(classify_error))
+            request_type = "TRIP"
+
+        if request_type not in ["CHAT", "TRIP", "SINGLE_PLACE", "PLACE_RECOMMEND", "EDIT_TRIP"]:
+            request_type = "TRIP"
+
+        # ==================================================
+        # 일반 채팅 처리
+        # ==================================================
+        if request_type == "CHAT":
+            chat_prompt = f"""
+            너는 플랜B AI 여행 도우미다.
+            답변은 1~3문장으로 짧게 작성한다.
+            여행과 무관한 말에는 자연스럽게 반응하고, 필요하면 여행/장소 추천으로 부드럽게 유도한다.
+            JSON이 아니라 일반 문장으로만 답한다.
+
+            [이전 대화]
+            {conversation_history}
+
+            [현재 사용자 메시지]
+            {user_message}
+            """
+
+            chat_response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=chat_prompt,
+                config={
+                    "temperature": 0.3,
+                    "max_output_tokens": 1000
+                }
+            )
+
+            chat_content = chat_response.text or "무엇을 도와드릴까요? 😊"
+
+            chat_msg_res = supabase.table("chat_messages").insert({
+                "session_id": session_id,
+                "role": "ai",
+                "plan_name": None,
+                "plan_date": None,
+                "plan_content": chat_content
+            }).execute()
+
+            return {
+                "role": "ai",
+                "messageId": chat_msg_res.data[0]["id"] if chat_msg_res.data else None,
+                "planName": None,
+                "planDate": None,
+                "planContent": chat_content,
+                "planPlaces": []
+            }
+
+        # ==================================================
+        # 기존 일정 수정 처리
+        # ==================================================
+        if request_type == "EDIT_TRIP":
             latest_ai_res = supabase.table("chat_messages") \
                 .select("id, plan_name, plan_date, plan_content, weather, ai_places(*)") \
                 .eq("session_id", session_id) \
@@ -711,123 +851,51 @@ async def generate_itinerary(request: ChatRequest):
             }
 
             edit_prompt = f"""
-        너는 기존 여행 일정을 수정하는 AI다.
+            너는 기존 여행 일정을 수정하는 AI다.
+            반드시 JSON만 출력한다.
 
-        규칙:
-        - 기존 일정 전체를 새로 만들지 말 것
-        - 사용자가 바꾸라고 한 장소만 교체
-        - 나머지 장소는 그대로 유지
-        - 교체 장소는 기존 날짜와 시간대에 어울려야 함
-        - 같은 날짜 동선에서 너무 멀어지면 가까운 대체 장소 추천
-        - 반드시 실제 존재하는 장소만 사용
-        - latitude와 longitude는 실제 좌표 사용
-        - description은 2문장 이하
-        - imageUrl 생성 금지
-        - JSON만 출력
-        - ```json 금지
-        - 사용자가 언급한 장소만 변경
-        - 변경되지 않은 장소는 title/time/date 유지
+            핵심 규칙:
+            - 기존 일정 전체를 새로 만들지 말 것
+            - 사용자가 바꾸라고 한 장소/조건만 변경
+            - 변경하지 않는 장소는 title, date, time, latitude, longitude를 그대로 유지
+            - 교체 장소는 같은 날짜의 다른 장소들과 가까워야 함
+            - 반드시 실제 존재하는 장소만 사용
+            - latitude와 longitude는 실제 좌표 사용
+            - description은 2문장 이하
+            - imageUrl은 만들지 말 것
 
-        [기존 일정]
-        {json.dumps(existing_plan, ensure_ascii=False)}
+            [기존 일정]
+            {json.dumps(existing_plan, ensure_ascii=False)}
 
-        [사용자 수정 요청]
-        {user_message}
+            [수정 요청]
+            {user_message}
 
-        [출력 형식]
-        {{
-        "planName": "string",
-        "planDate": "string",
-        "planContent": "string",
-        "weather": "string",
-        "planPlaces": [
+            [출력 형식]
             {{
-            "title": "string",
-            "date": "YYYY-MM-DD",
-            "latitude": 0.0,
-            "longitude": 0.0,
-            "time": "HH:MM-HH:MM",
-            "description": "string",
-            "url": "string"
+              "planName": "string",
+              "planDate": "string",
+              "planContent": "string",
+              "weather": "string",
+              "planPlaces": [
+                {{
+                  "title": "string",
+                  "date": "YYYY-MM-DD",
+                  "latitude": 0.0,
+                  "longitude": 0.0,
+                  "time": "HH:MM-HH:MM",
+                  "description": "string",
+                  "url": "string"
+                }}
+              ]
             }}
-        ]
-        }}
-        """
+            """
 
-            edit_response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=edit_prompt,
-                config={
-                    "temperature": 0.2,
-                    "max_output_tokens": 12000
-                }
-            )
+            ai_data = normalize_ai_data(generate_json(edit_prompt))
 
-            raw_content = edit_response.text or ""
+            if not ai_data["planPlaces"]:
+                ai_data["planPlaces"] = existing_plan["planPlaces"]
 
-            try:
-                start = raw_content.find("{")
-                end = raw_content.rfind("}")
-
-                if start == -1 or end == -1:
-                    raise ValueError("JSON 없음")
-
-                ai_data = json.loads(raw_content[start:end + 1])
-
-            except Exception as parse_error:
-                print("EDIT JSON 파싱 실패:", str(parse_error))
-                print("EDIT RAW CONTENT:", raw_content)
-
-                raise HTTPException(
-                    status_code=500,
-                    detail="수정된 일정 JSON 파싱 실패"
-                )
-
-            ai_data = {
-                "planName": ai_data.get("planName") or existing_plan["planName"],
-                "planDate": ai_data.get("planDate") or existing_plan["planDate"],
-                "planContent": ai_data.get("planContent") or existing_plan["planContent"],
-                "weather": ai_data.get("weather") or existing_plan["weather"],
-                "planPlaces": ai_data.get("planPlaces") or existing_plan["planPlaces"]
-            }
-
-            ai_msg_res = supabase.table("chat_messages").insert({
-                "session_id": session_id,
-                "role": "ai",
-                "plan_name": ai_data["planName"],
-                "plan_date": ai_data["planDate"],
-                "plan_content": ai_data["planContent"],
-                "weather": ai_data["weather"]
-            }).execute()
-
-            message_id = ai_msg_res.data[0]["id"]
-
-            places_data = []
-
-            for p in ai_data["planPlaces"]:
-                try:
-                    image_url = get_place_image_url(p.get("title", ""))
-
-                    p["imageUrl"] = image_url
-
-                    places_data.append({
-                        "message_id": message_id,
-                        "title": p.get("title", ""),
-                        "date": p.get("date", ""),
-                        "latitude": float(p.get("latitude") or 0.0),
-                        "longitude": float(p.get("longitude") or 0.0),
-                        "time": p.get("time", ""),
-                        "description": p.get("description", ""),
-                        "url": p.get("url", ""),
-                        "image_url": image_url
-                    })
-
-                except Exception as place_error:
-                    print("EDIT PLACE ERROR:", str(place_error))
-                    continue
-
-            if places_data:
-                supabase.table("ai_places").insert(places_data).execute()
+            message_id = save_ai_message(ai_data)
 
             return {
                 "role": "ai",
@@ -835,421 +903,170 @@ async def generate_itinerary(request: ChatRequest):
                 **ai_data
             }
 
-        is_trip = any(
-            k in user_message
-            for k in duration_keywords
-        )
-
-        recommend_keywords = [
-            "추천",
-            "명소",
-            "맛집",
-            "카페",
-            "관광지",
-            "핫플",
-            "술집",
-            "식당",
-            "가볼만한곳"
-        ]
-
-        is_single_place = (
-            any(k in user_message for k in ["하나", "한 곳", "1곳", "한군데", "한 군데"])
-            and any(k in user_message for k in recommend_keywords)
-            and not is_trip
-        )
-
-        is_multi_place_recommend = (
-            any(k in user_message for k in recommend_keywords)
-            and not is_trip
-            and not is_single_place
-        )
-
-        is_chat = (
-            any(k in user_message for k in chat_keywords)
-            and not is_single_place
-            and not is_trip
-        )
-
-        # ==================================================
-        # 일반 채팅 처리
-        # ==================================================
-        if is_chat:
-
-            chat_prompt = f"""
-            너는 여행 일정 추천 AI다.
-
-            규칙:
-            - 여행과 관련 없는 질문이면 짧고 자연스럽게 반응
-            - 이후 여행이나 장소 추천 쪽으로 자연스럽게 유도
-            - 답변은 너무 길지 않게 1~3문장 정도로 작성
-            - 친근하고 부드러운 말투 사용
-            - 사용자가 부담스럽지 않게 느끼도록 답변
-            - 억지로 여행 이야기만 강요하지 말 것
-
-            예시:
-
-            사용자: 배고프다
-            AI:
-            맛있는 거 먹고 싶을 때죠 😊
-            원하시면 맛집이나 분위기 좋은 장소도 추천해드릴게요!
-
-            사용자: 심심하다
-            AI:
-            기분 전환할 만한 곳 찾아보는 것도 좋죠 😊
-            원하시면 여행지나 데이트 코스도 추천해드릴게요!
-
-            사용자: 안녕
-            AI:
-            안녕하세요 😊
-            여행 일정이나 가볼 만한 장소 추천도 도와드릴 수 있어요!
-
-            사용자: 너 누구야?
-            AI:
-            저는 플랜B AI입니다 😊
-            여행 일정이나 장소 추천을 도와드리고 있어요!
-
-            사용자: 뭐 물어보면 돼?
-            AI:
-            예를 들면 이런 요청이 가능해요 😊
-            - 도쿄 3박 4일 여행 일정 짜줘
-            - 오사카 맛집 추천해줘
-            - 서울 데이트 코스 추천해줘
-
-                [이전 대화]
-                {conversation_history}
-
-                [현재 사용자 메시지]
-                {user_message}
-                """
-
-            chat_response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=chat_prompt
-            )
-
-            chat_content = chat_response.text
-
-            chat_msg_res = supabase.table("chat_messages").insert({
-                "session_id": session_id,
-                "role": "ai",
-                "plan_name": None,
-                "plan_date": None,
-                "plan_content": chat_content
-            }).execute()
-
-            chat_message_id = (
-                chat_msg_res.data[0]["id"]
-                if chat_msg_res.data
-                else None
-            )
-
-            return {
-                "role": "ai",
-                "messageId": chat_message_id,
-                "planName": None,
-                "planDate": None,
-                "planContent": chat_content,
-                "planPlaces": []
-            }
-
-        # ==================================================
-        # 장소 추천 / 여행 일정
-        # ==================================================
-
-        if is_single_place:
-
+        if request_type == "SINGLE_PLACE":
             trip_rule = """
-                - 장소 1개만 추천
-                - 반드시 실제 존재하는 장소만 사용
-                - 반드시 실제 상호명 사용
-                - "~맛집", "~카페", "~전문점" 같은 일반적인 이름 금지
-                - 장소 이름(title)은 실제 지도 검색 가능한 이름이어야 함
-
-                - 사용자가 음식 종류를 요청한 경우에만 음식점 추천
-                - 음식 요청이 아닐 경우 관광지/명소/카페/전시/공원 등 일반 장소 추천 가능
-
-                - 음식 요청이면 실제 해당 음식 전문점만 추천
-                - planPlaces는 반드시 1개만 생성
-                - planPlaces는 반드시 1개의 객체만 포함
-                - latitude와 longitude는 실제 좌표 사용
-                """
-        elif is_multi_place_recommend:
+            - 장소 1개만 추천
+            - planPlaces는 반드시 1개
+            - date와 time은 빈 문자열 가능
+            - 사용자가 음식 종류를 요청한 경우에만 음식점 추천
+            - 음식 요청이 아니면 관광지/명소/전시/공원/카페 등 요청 의도에 맞는 장소 추천
+            """
+        elif request_type == "PLACE_RECOMMEND":
             trip_rule = """
-                - 날짜 기반 일정 생성 금지
-                - 여행 코스 생성 금지
-                - 장소만 추천
-                - planDate는 빈 문자열로 작성
-                - planPlaces는 3~6개 생성
-                - 모든 장소는 사용자가 요청한 카테고리에 맞게 추천
-                - time은 빈 문자열로 작성
-                - date는 빈 문자열로 작성
-                - 장소 설명은 2문장 이하
+            - 날짜 기반 일정 생성 금지
+            - planDate는 빈 문자열
+            - date와 time은 빈 문자열
+            - planPlaces는 3~6개
+            - 요청 카테고리에 맞는 실제 장소만 추천
             """
         else:
-
             trip_rule = """
-                - 사용자가 요청한 여행 기간 기준으로 일정 생성
-                - 기간 언급이 없으면 기본 2박 3일로 생성
-                - 실제 존재하는 장소만 사용
-                - 반드시 실제 상호명 사용
+            - 사용자가 요청한 여행 기간 기준으로 일정 생성
+            - 기간 언급이 없으면 기본 2박 3일
+            - 하루마다 관광지는 3개씩 추천
+            - 음식 여행 요청일 때만 식당/카페 포함 가능
+            - 일반 여행 요청에는 관광지, 랜드마크, 자연경관, 전시, 공원, 체험 위주
+            - 같은 날짜의 장소는 가까운 지역끼리 묶기
+            - 하루 안에 도시 반대편을 왕복하는 동선 금지
+            - 오전/점심/오후 흐름이 자연스럽게 이어지게 구성
+            - 산, 등산, 트레킹은 최소 3~5시간 체류 배정
+            """
 
-                - "~맛집", "~카페", "~전문점" 같은 일반적인 이름 금지
-                - 장소 이름(title)은 실제 지도 검색 가능한 이름이어야 함
+        planning_prompt = f"""
+        너는 여행 동선을 설계하는 AI다.
+        최종 사용자 화면에 보여줄 문장이 아니라 내부 계획 JSON만 출력한다.
 
-                - 일반 여행 일정은 관광지, 랜드마크, 자연경관, 전시, 공원, 체험 위주로만 구성
-                - 음식점, 카페 추천 금지
-                - 하루마다 관광지 3개씩만 추천
-                - 같은 장소 반복 금지
-                - 사용자가 음식 여행을 요청한 경우에만 음식점 추천 가능
-                - 같은 날짜에 너무 멀리 떨어진 장소는 추천하지 말것
+        현재 날짜: {today_str}
+        기본 여행 가능 기간: {today_str} ~ {after_3days}
+        요청 유형: {request_type}
 
-                - planPlaces 최소 3개
-                - latitude와 longitude는 실제 좌표 사용
-                """
+        계획 규칙:
+        - 사용자의 목적지, 기간, 테마를 해석
+        - 날짜 표현이 있으면 실제 날짜로 변환
+        - 날짜가 없고 일정 요청이면 현재 날짜 기준 기본 2박 3일
+        - 같은 날짜는 가까운 지역끼리 묶기
+        - 음식 요청이 아닌 일반 여행은 식당/카페 금지
+        - 장소 수가 너무 많거나 적지 않게 계획
+        - 장소명은 실제 검색 가능한 이름만 사용
 
-        prompt = f"""
-            너는 여행 일정 생성 AI다.
+        [요청별 규칙]
+        {trip_rule}
 
-            현재 날짜: {today_str}
-            여행 가능 기간: {today_str} ~ {after_3days}
-
-            [규칙]
-            - JSON만 출력
-            - 설명 텍스트 금지
-            - 반드시 영어 key만 사용
-            - 값(value)은 반드시 한국어로 작성
-            - 장소 이름도 한국어 사용
-            - 설명도 한국어 사용
-            - planPlaces는 항상 배열
-
-            - 반드시 실제 존재하는 장소만 사용
-            - 반드시 실제 상호명 사용
-            - 사용자가 날짜를 직접 말하면 그 날짜를 여행 시작일로 사용
-            - "내일", "모레", "다음주", "주말", "금요일" 같은 자연어 날짜 표현도 해석
-            - 사용자가 날짜를 말하지 않으면 현재 날짜 기준으로 생성
-
-            - 사용자의 음식/장소 카테고리와 실제로 관련된 장소만 추천
-            - 존재하지 않는 메뉴나 특징을 지어내지 말 것
-            - weather는 여행 기간 기준 예상 날씨를 간단하게 작성
-            - 각 장소(url)는 실제 지도 또는 공식 사이트 링크 사용
-            - url은 반드시 https:// 로 시작
-            - 존재하지 않는 링크 생성 금지
-            - 해당 장소에 대한 링크가 없으면 생성 금지 
-            - 장소와 관련된 실제 검색 가능한 URL만 사용
-            - 이미지 URL을 모르면 빈 문자열 사용
-
-            - description은 3문장 이하로 작성
-            - planContent는 사용자의 요청 의도에 맞춰 작성
-            - planContent에는 왜 이 일정이 사용자 요청에 적합한지 설명
-            - planContent에는 여행 동선의 특징을 포함
-            - planContent에는 전체 여행 분위기와 핵심 방문 포인트를 포함
-            - planContent는 3~5문장으로 작성
-            - 단순한 장소 나열 금지
-            여행지가 있으면:
-            {trip_rule}
-
-            [출력 형식]
+        출력 형식:
+        {{
+          "intentSummary": "string",
+          "startDate": "YYYY-MM-DD 또는 빈 문자열",
+          "endDate": "YYYY-MM-DD 또는 빈 문자열",
+          "dailyPlanLogic": [
             {{
-                "planName": "string",
-                "planDate": "{today_str} ~ {after_3days}",
-                "planContent": "string",
-                "weather": "string",
-                "planPlaces": [
-                {{
-                    "title": "string",
-                    "date": "YYYY-MM-DD",
-                    "latitude": 0.0,
-                    "longitude": 0.0,
-                    "time": "HH:MM-HH:MM",
-                    "description": "string",
-                    "url": "string"
-                }}
-            ]
+              "date": "YYYY-MM-DD 또는 빈 문자열",
+              "area": "string",
+              "placeCount": 3,
+              "reason": "string"
             }}
+          ]
+        }}
 
-        
-            [이전 대화]
-            {conversation_history}
+        [이전 대화]
+        {conversation_history}
 
-            [현재 사용자 요청]
-            {user_message}
-            """
+        [현재 사용자 요청]
+        {user_message}
+        """
 
-        full_prompt = f"""
-            너는 실제 존재하는 장소만 추천하는 여행 AI다.
+        planning_data = generate_json(planning_prompt, max_tokens=5000)
 
-            규칙:
-            - 사용자의 요청 카테고리와 정확히 일치하는 장소만 추천
-            - 음식 요청이면 해당 음식 전문점만 추천
-            - 일반 여행 요청은 관광지 위주로만 추천
-            - 음식 요청이 아닌 경우 음식점과 카페 추천 금지
-            - 하루당 관광지는 3개만 추천
-            - 사용자가 식당이나 음식을 요청한 경우 관광지 3개에 식당 2개를 추가해 총 5개 장소 추천
-            - 하루 일정은 오전/점심/오후 흐름이 자연스럽게 구성
-            - 장소 수 부족하거나 초과하지 말것
-            - latitude와 longitude는 반드시 실제 좌표값 사용
-            - 가짜 장소명 생성 금지
-            - 실제 지도 검색 가능한 장소만 사용
-            - 같은 날짜에 너무 멀리 떨어진 장소는 추천하지 말것
-            - 하루 일정은 실제로 이동 가능한 거리와 시간 안에서 구성
-            - 같은 날짜의 장소들은 서로 가까운 지역끼리 묶어서 추천
-            - 하루 안에 도시 반대편을 여러 번 왕복하는 동선 금지
-            - 오전 장소 → 점심/오후 장소 → 저녁 장소 순서가 자연스럽게 이어지게 구성
-            - 장소 간 이동 시간이 너무 길어지면 가까운 대체 장소로 변경
-            - 각 장소 종료 시간 + 다음 장소까지 이동 시간을 계산했을 때 다음 일정 시작 시간보다 늦으면 안 됨
-            - 이동 시간이 긴 경우 다음 장소 시작 시간을 자동으로 늦춰서 현실적인 일정으로 구성
-            - 산, 등산, 트레킹, 국립공원 일정은 최소 3~5시간 이상 체류 시간 배정
-            - 한라산, 지리산 같은 등산 장소는 짧은 관광지처럼 1~2시간만 배정 금지
-            - 하루 일정 생성 후 실제 시간 순서가 가능한지 다시 검토 후 출력
-            추가 규칙:
-            - 반드시 JSON만 출력
-            - ```json 금지
-            - 설명 금지
+        final_prompt = f"""
+        너는 실제 존재하는 장소만 추천하는 여행 일정 생성 AI다.
+        반드시 JSON만 출력한다.
 
-            Google Search를 사용해서 실제 존재하는 장소를 확인해라
+        현재 날짜: {today_str}
+        기본 여행 가능 기간: {today_str} ~ {after_3days}
+        요청 유형: {request_type}
 
-            {prompt}
-            """
+        절대 규칙:
+        - 영어 key만 사용
+        - 값은 한국어로 작성
+        - planPlaces는 항상 배열
+        - 실제 존재하는 장소명만 사용
+        - "~맛집", "~카페", "~전문점" 같은 일반명 금지
+        - latitude와 longitude는 실제 좌표값 사용
+        - url은 실제 지도/공식 사이트 링크만 사용
+        - 실제 링크를 확신하지 못하면 url은 빈 문자열
+        - imageUrl 생성 금지
+        - description은 2문장 이하
+        - planContent는 3~5문장
+        - 장소 중복 금지
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=full_prompt,
-            config={
-                "temperature": 0.2,
-                "max_output_tokens": 12000
-            }
-        )
+        [요청별 규칙]
+        {trip_rule}
 
-        print("FULL RESPONSE:", response)
+        [내부 동선 계획]
+        {json.dumps(planning_data, ensure_ascii=False)}
 
-        raw_content = ""
+        [출력 형식]
+        {{
+          "planName": "string",
+          "planDate": "string",
+          "planContent": "string",
+          "weather": "string",
+          "planPlaces": [
+            {{
+              "title": "string",
+              "date": "YYYY-MM-DD 또는 빈 문자열",
+              "latitude": 0.0,
+              "longitude": 0.0,
+              "time": "HH:MM-HH:MM 또는 빈 문자열",
+              "description": "string",
+              "url": "string"
+            }}
+          ]
+        }}
+
+        [현재 사용자 요청]
+        {user_message}
+        """
+
+        ai_data = normalize_ai_data(generate_json(final_prompt))
+
+        validator_prompt = f"""
+        너는 여행 일정 검수 AI다.
+        반드시 JSON만 출력한다.
+
+        아래 JSON을 검사하고 문제가 있으면 수정한 최종 JSON을 반환한다.
+        문제가 없어도 같은 형식으로 그대로 반환한다.
+
+        검사 항목:
+        - 사용자의 요청 유형과 맞는지
+        - 음식 요청이 아닌데 식당/카페가 섞였는지
+        - 날짜 없는 장소 추천인데 date/time이 들어갔는지
+        - 단일 장소 추천인데 장소가 2개 이상인지
+        - 일정 요청인데 날짜와 시간이 비어 있는지
+        - 같은 날짜 장소가 너무 멀리 떨어져 있는지
+        - 시간이 겹치거나 이동이 불가능한지
+        - 장소명이 실제 지도 검색 가능한 고유명사인지
+        - 좌표가 0 또는 비정상 값인지
+
+        [요청별 규칙]
+        {trip_rule}
+
+        [사용자 요청]
+        {user_message}
+
+        [검수할 JSON]
+        {json.dumps(ai_data, ensure_ascii=False)}
+        """
 
         try:
-            if getattr(response, "text", None):
-                raw_content = response.text
+            checked_data = normalize_ai_data(generate_json(validator_prompt))
 
-            elif (
-                response.candidates
-                and response.candidates[0].content
-                and response.candidates[0].content.parts
-            ):
-                parts = response.candidates[0].content.parts
+            if checked_data["planPlaces"]:
+                ai_data = checked_data
 
-                raw_content = "".join(
-                    part.text
-                    for part in parts
-                    if hasattr(part, "text") and part.text
-                )
+        except Exception as validate_error:
+            print("VALIDATION SKIPPED:", str(validate_error))
 
-        except Exception as response_error:
-            print(
-                "GEMINI RESPONSE ERROR:",
-                str(response_error)
-            )
-
-            raw_content = ""
-
-        if not raw_content:
-            print("GEMINI EMPTY RESPONSE:", response)
-
-            raise HTTPException(
-                status_code=500,
-                detail="Gemini가 빈 응답을 반환했습니다."
-            )
-
-        print("RAW:", raw_content)
-
-        try:
-            start = raw_content.find("{")
-            end = raw_content.rfind("}")
-
-            if start == -1 or end == -1:
-                raise ValueError("JSON 없음")
-
-            json_text = raw_content[start:end + 1]
-
-            ai_data = json.loads(json_text)
-
-        except Exception as parse_error:
-            print(
-                "JSON 파싱 실패:",
-                str(parse_error)
-            )
-
-            print("RAW CONTENT:", raw_content)
-
-            raise HTTPException(
-                status_code=500,
-                detail="AI JSON 파싱 실패"
-            )
-
-        ai_data = {
-            "planName": ai_data.get("planName") or "여행 계획",
-            "planDate": ai_data.get("planDate") or "",
-            "planContent": ai_data.get("planContent") or "",
-            "weather": ai_data.get("weather") or "",
-            "planPlaces": ai_data.get("planPlaces") or []
-        }
-
-        if not isinstance(ai_data["planPlaces"], list):
-            ai_data["planPlaces"] = []
-
-        ai_msg_res = supabase.table("chat_messages").insert({
-            "session_id": session_id,
-            "role": "ai",
-            "plan_name": ai_data["planName"],
-            "plan_date": ai_data["planDate"],
-            "plan_content": ai_data["planContent"],
-            "weather": ai_data["weather"]
-        }).execute()
-
-        if not ai_msg_res.data:
-            raise Exception("chat_messages insert 실패")
-
-        message_id = ai_msg_res.data[0]["id"]
-
-        places_data = []
-
-        for p in ai_data["planPlaces"]:
-            try:
-                image_url = get_place_image_url(
-                    p.get("title", "")
-                )
-
-                p["imageUrl"] = image_url
-
-                places_data.append({
-                    "message_id": message_id,
-                    "title": p.get("title", ""),
-                    "date": p.get("date", today_str),
-                    "latitude": float(p.get("latitude") or 0.0),
-                    "longitude": float(p.get("longitude") or 0.0),
-                    "time": p.get("time", ""),
-                    "description": p.get("description", ""),
-                    "url": p.get("url", ""),
-                    "image_url": image_url
-                })
-
-            except Exception as place_error:
-
-                print(
-                    "PLACE ERROR:",
-                    str(place_error)
-                )
-
-                continue
-
-        if places_data:
-            supabase.table("ai_places") \
-                .insert(places_data) \
-                .execute()
-
-        supabase.table("chat_sessions") \
-            .update({
-                "title": ai_data["planName"]
-            }) \
-            .eq("id", session_id) \
-            .execute()
+        message_id = save_ai_message(ai_data)
 
         return {
             "role": "ai",
@@ -1358,7 +1175,6 @@ async def save_routes(
                 "duration": route.duration,
             })
 
-        #오류 수정: 실제 insert 결과 확인
         insert_res = supabase.table(
             "place_routes"
         ).upsert(
