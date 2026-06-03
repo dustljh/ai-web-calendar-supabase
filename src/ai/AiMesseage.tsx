@@ -73,6 +73,18 @@ export function AiMessage({
     message.planPlaces.length > 1 &&
     !message.planPlaces.some((place) => place.date?.trim());
 
+  const hasScheduledPlaces =
+    message.planPlaces?.some(
+      (place) =>
+        place.date?.trim() &&
+        place.time?.trim()
+    ) ?? false;
+
+  const canSaveSchedule =
+    hasScheduledPlaces &&
+    !isSinglePlace &&
+    !isMultiPlaceRecommend;
+
   let placeNumber = 1;
 
   const isTravelMessage =
@@ -331,7 +343,7 @@ export function AiMessage({
         </>
       )}
 
-      {hasPlaces && !isSinglePlace && (
+      {canSaveSchedule && (
         <div className="flex justify-end mt-4">
           <Button
             className="bg-[#ffffff] text-black hover:bg-gray-200 border"

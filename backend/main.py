@@ -560,6 +560,7 @@ async def generate_itinerary(request: ChatRequest):
     after_3days = (now + timedelta(days=2)).strftime("%Y-%m-%d")
     session_id = request.session_id
 
+    # 오류 수정: 프론트 입력값은 그대로 두고, 백엔드 내부에서만 AI 분류/생성/검증 단계를 분리
     def extract_json(raw_content: str):
         try:
             return json.loads(raw_content)
@@ -572,6 +573,7 @@ async def generate_itinerary(request: ChatRequest):
 
             return json.loads(raw_content[start:end + 1])
 
+    # 오류 수정: Gemini JSON 응답을 강제하고, 실패 시 기존 중괄호 추출 방식으로 한 번 더 복구
     def generate_json(prompt_text: str, max_tokens: int = 12000):
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -710,6 +712,7 @@ async def generate_itinerary(request: ChatRequest):
             content = msg.get("plan_content") or ""
             conversation_history += f"{role}: {content}\n"
 
+        # 오류 수정: 키워드만으로 분기하지 않고 AI가 요청 유형을 먼저 분류해서 애매한 문장 처리 정확도 개선
         classifier_prompt = f"""
         너는 여행 서비스 요청 분류기다.
         반드시 JSON만 출력한다.
@@ -719,12 +722,14 @@ async def generate_itinerary(request: ChatRequest):
         - TRIP: 날짜/기간/코스/일정/동선이 필요한 여행 계획 요청
         - SINGLE_PLACE: 장소 1개만 추천 요청
         - PLACE_RECOMMEND: 날짜 없는 여러 장소 추천 요청
+        - COUNTRY_RECOMMEND: 나라/국가/첫 해외여행 추천 요청
         - EDIT_TRIP: 기존 일정에서 장소/날짜/조건을 바꾸는 요청
 
         판단 규칙:
         - "바꿔", "대신", "빼고", "말고", "교체", "수정"이 있고 기존 일정 문맥이 있으면 EDIT_TRIP
         - "3박 4일", "당일치기", "일정", "코스", "루트", "짜줘"는 TRIP
         - "하나", "한 곳", "1곳"과 "추천"이 같이 있으면 SINGLE_PLACE
+        - "나라 추천", "국가 추천", "나라를 추천", "나라만 추천", "첫 해외", "처음 해외", "해외 어디", "어느 나라", "어떤 나라"는 COUNTRY_RECOMMEND
         - "맛집 추천", "카페 추천", "명소 추천"처럼 날짜가 없고 여러 개 추천이면 PLACE_RECOMMEND
 
         출력 형식:
@@ -746,8 +751,91 @@ async def generate_itinerary(request: ChatRequest):
             print("CLASSIFY ERROR:", str(classify_error))
             request_type = "TRIP"
 
-        if request_type not in ["CHAT", "TRIP", "SINGLE_PLACE", "PLACE_RECOMMEND", "EDIT_TRIP"]:
+        # 오류 수정: 나라/국가 추천 타입 허용
+        if request_type not in ["CHAT", "TRIP", "SINGLE_PLACE", "PLACE_RECOMMEND", "COUNTRY_RECOMMEND", "EDIT_TRIP"]:
             request_type = "TRIP"
+
+        # 오류 수정: 분류기가 놓쳐도 나라/국가 추천 요청은 관광지 추천으로 보내지 않음
+        country_recommend_keywords = [
+            "나라 추천",
+            "나라만 추천",
+            "나라를 추천",
+            "국가 추천",
+            "국가만 추천",
+            "국가를 추천",
+            "어느 나라",
+            "어떤 나라",
+            "해외 어디",
+            "첫 해외",
+            "처음 해외",
+            "해외 여행지"
+        ]
+
+        if any(keyword in user_message for keyword in country_recommend_keywords):
+            request_type = "COUNTRY_RECOMMEND"
+
+        # ==================================================
+        # 나라/국가 추천 상담 처리
+        # ==================================================
+        if request_type == "COUNTRY_RECOMMEND":
+            country_prompt = f"""
+            너는 첫 해외여행과 나라 선택을 도와주는 여행 상담 AI다.
+
+            규칙:
+            - JSON 금지
+            - markdown 표 금지
+            - 개별 관광지 추천 금지
+            - 도쿄 타워, 도톤보리, 금각사, 사슴공원 같은 장소 이름 나열 금지
+            - 나라/국가 중심으로만 추천
+            - 사용자가 "나라만" 또는 "나라를 추천"이라고 하면 반드시 나라 이름을 중심으로 답변
+            - 1순위 추천 나라를 먼저 말하고, 이유를 짧게 설명
+            - 후보는 2~4개 정도만 제시
+            - 첫 해외여행이면 치안, 비행시간, 교통, 음식 적응, 비용을 고려
+            - 마지막에는 "원하면 그 나라로 일정까지 짜줄게요"처럼 자연스럽게 연결
+            - 답변은 한국어로 작성
+            - 너무 길지 않게 작성
+
+            좋은 답변 예시:
+            첫 해외여행이면 저는 일본을 가장 추천해요 😊
+            한국에서 가깝고, 치안이 안정적이고, 대중교통이 좋아서 처음 가도 부담이 적어요.
+
+            조금 더 여유로운 분위기를 원하면 대만, 휴양 느낌이면 태국도 좋아요.
+            원하면 일본/대만/태국 중 하나로 2박 3일 일정까지 바로 짜드릴게요.
+
+            [이전 대화]
+            {conversation_history}
+
+            [현재 사용자 메시지]
+            {user_message}
+            """
+
+            country_response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=country_prompt,
+                config={
+                    "temperature": 0.4,
+                    "max_output_tokens": 1500
+                }
+            )
+
+            country_content = country_response.text or "첫 해외여행이면 일본이나 대만을 추천해요. 이동이 편하고 치안이 좋아서 처음 가기 부담이 적어요 😊"
+
+            chat_msg_res = supabase.table("chat_messages").insert({
+                "session_id": session_id,
+                "role": "ai",
+                "plan_name": None,
+                "plan_date": None,
+                "plan_content": country_content
+            }).execute()
+
+            return {
+                "role": "ai",
+                "messageId": chat_msg_res.data[0]["id"] if chat_msg_res.data else None,
+                "planName": None,
+                "planDate": None,
+                "planContent": country_content,
+                "planPlaces": []
+            }
 
         # ==================================================
         # 일반 채팅 처리
@@ -929,6 +1017,7 @@ async def generate_itinerary(request: ChatRequest):
             - 산, 등산, 트레킹은 최소 3~5시간 체류 배정
             """
 
+        # 오류 수정: 바로 최종 JSON을 만들지 않고, 먼저 동선 계획을 생성해 일정의 현실성 개선
         planning_prompt = f"""
         너는 여행 동선을 설계하는 AI다.
         최종 사용자 화면에 보여줄 문장이 아니라 내부 계획 JSON만 출력한다.
@@ -1026,6 +1115,7 @@ async def generate_itinerary(request: ChatRequest):
 
         ai_data = normalize_ai_data(generate_json(final_prompt))
 
+        # 오류 수정: 생성 결과를 한 번 더 검증/수정해서 장소 수, 카테고리, 시간 겹침, 비현실적 동선 감소
         validator_prompt = f"""
         너는 여행 일정 검수 AI다.
         반드시 JSON만 출력한다.
@@ -1172,6 +1262,7 @@ async def save_routes(
                 "duration": route.duration,
             })
 
+        #오류 수정: 실제 insert 결과 확인
         insert_res = supabase.table(
             "place_routes"
         ).upsert(
