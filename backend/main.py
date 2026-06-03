@@ -560,7 +560,6 @@ async def generate_itinerary(request: ChatRequest):
     after_3days = (now + timedelta(days=2)).strftime("%Y-%m-%d")
     session_id = request.session_id
 
-    # 오류 수정: 프론트 입력값은 그대로 두고, 백엔드 내부에서만 AI 분류/생성/검증 단계를 분리
     def extract_json(raw_content: str):
         try:
             return json.loads(raw_content)
@@ -573,7 +572,6 @@ async def generate_itinerary(request: ChatRequest):
 
             return json.loads(raw_content[start:end + 1])
 
-    # 오류 수정: Gemini JSON 응답을 강제하고, 실패 시 기존 중괄호 추출 방식으로 한 번 더 복구
     def generate_json(prompt_text: str, max_tokens: int = 12000):
         response = client.models.generate_content(
             model="gemini-2.5-flash",
@@ -712,7 +710,6 @@ async def generate_itinerary(request: ChatRequest):
             content = msg.get("plan_content") or ""
             conversation_history += f"{role}: {content}\n"
 
-        # 오류 수정: 키워드만으로 분기하지 않고 AI가 요청 유형을 먼저 분류해서 애매한 문장 처리 정확도 개선
         classifier_prompt = f"""
         너는 여행 서비스 요청 분류기다.
         반드시 JSON만 출력한다.
@@ -932,7 +929,6 @@ async def generate_itinerary(request: ChatRequest):
             - 산, 등산, 트레킹은 최소 3~5시간 체류 배정
             """
 
-        # 오류 수정: 바로 최종 JSON을 만들지 않고, 먼저 동선 계획을 생성해 일정의 현실성 개선
         planning_prompt = f"""
         너는 여행 동선을 설계하는 AI다.
         최종 사용자 화면에 보여줄 문장이 아니라 내부 계획 JSON만 출력한다.
@@ -1030,7 +1026,6 @@ async def generate_itinerary(request: ChatRequest):
 
         ai_data = normalize_ai_data(generate_json(final_prompt))
 
-        # 오류 수정: 생성 결과를 한 번 더 검증/수정해서 장소 수, 카테고리, 시간 겹침, 비현실적 동선 감소
         validator_prompt = f"""
         너는 여행 일정 검수 AI다.
         반드시 JSON만 출력한다.
@@ -1177,7 +1172,6 @@ async def save_routes(
                 "duration": route.duration,
             })
 
-        #오류 수정: 실제 insert 결과 확인
         insert_res = supabase.table(
             "place_routes"
         ).upsert(
