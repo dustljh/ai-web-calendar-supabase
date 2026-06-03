@@ -932,6 +932,7 @@ async def generate_itinerary(request: ChatRequest):
             - 산, 등산, 트레킹은 최소 3~5시간 체류 배정
             """
 
+        # 오류 수정: 바로 최종 JSON을 만들지 않고, 먼저 동선 계획을 생성해 일정의 현실성 개선
         planning_prompt = f"""
         너는 여행 동선을 설계하는 AI다.
         최종 사용자 화면에 보여줄 문장이 아니라 내부 계획 JSON만 출력한다.
@@ -1029,6 +1030,7 @@ async def generate_itinerary(request: ChatRequest):
 
         ai_data = normalize_ai_data(generate_json(final_prompt))
 
+        # 오류 수정: 생성 결과를 한 번 더 검증/수정해서 장소 수, 카테고리, 시간 겹침, 비현실적 동선 감소
         validator_prompt = f"""
         너는 여행 일정 검수 AI다.
         반드시 JSON만 출력한다.
@@ -1175,6 +1177,7 @@ async def save_routes(
                 "duration": route.duration,
             })
 
+        #오류 수정: 실제 insert 결과 확인
         insert_res = supabase.table(
             "place_routes"
         ).upsert(
