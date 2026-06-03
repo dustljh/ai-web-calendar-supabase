@@ -613,26 +613,23 @@ async def generate_itinerary(request: ChatRequest):
         chat_keywords = [
             "안녕", "하이", "반가워", "뭐해",
             "심심해", "배고파", "졸려",
-            "피곤해", "ㅋㅋ", "ㅎㅎ",
+            "피곤해", "오늘", "ㅋㅋ", "ㅎㅎ",
             "너 누구야", "대화", "잡담",
-            "이야기", "추천 말고"
+            "이야기", "추천 말고",
+            "그냥", "야"
         ]
 
         user_message = request.user_message.strip()
-        if len(user_message) <= 2:
-            is_force_chat = True
-        else:
 
-            is_force_chat = False
-            edit_keywords = [
-                "바꿔줘",
-                "변경해줘",
-                "교체해줘",
-                "대신",
-                "말고",
-                "빼고",
-                "수정해줘"
-            ]
+        edit_keywords = [
+            "바꿔줘",
+            "변경해줘",
+            "교체해줘",
+            "대신",
+            "말고",
+            "빼고",
+            "수정해줘"
+        ]
 
         #오류 수정: 사용자 메시지 생성 후 수정 요청 판별
         is_edit_request = any(
@@ -760,10 +757,9 @@ async def generate_itinerary(request: ChatRequest):
             edit_response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=edit_prompt,
-               config={
+                config={
                     "temperature": 0.2,
-                    "max_output_tokens": 12000,
-                    "response_mime_type": "application/json"
+                    "max_output_tokens": 12000
                 }
             )
 
@@ -868,58 +864,70 @@ async def generate_itinerary(request: ChatRequest):
             and not is_single_place
         )
 
-        travel_intent_keywords = [
-            "일정", "여행", "코스", "루트", "동선",
-            "짜줘", "추천", "가볼만한곳", "맛집",
-            "카페", "관광지", "명소", "계획",
-            "당일치기", "1박", "2박", "3박", "4박"
-        ]
-
-        has_travel_intent = any(
-            k in user_message
-            for k in travel_intent_keywords
-        )
-
         is_chat = (
-            is_force_chat or (
-                any(k in user_message for k in chat_keywords)
-                and not has_travel_intent
-                and not is_single_place
-                and not is_trip
-            )
+            any(k in user_message for k in chat_keywords)
+            and not is_single_place
+            and not is_trip
         )
 
         # ==================================================
         # 일반 채팅 처리
         # ==================================================
         if is_chat:
+
+            chat_prompt = f"""
+            너는 여행 일정 추천 AI다.
+
+            규칙:
+            - 여행과 관련 없는 질문이면 짧고 자연스럽게 반응
+            - 이후 여행이나 장소 추천 쪽으로 자연스럽게 유도
+            - 답변은 너무 길지 않게 1~3문장 정도로 작성
+            - 친근하고 부드러운 말투 사용
+            - 사용자가 부담스럽지 않게 느끼도록 답변
+            - 억지로 여행 이야기만 강요하지 말 것
+
+            예시:
+
+            사용자: 배고프다
+            AI:
+            맛있는 거 먹고 싶을 때죠 😊
+            원하시면 맛집이나 분위기 좋은 장소도 추천해드릴게요!
+
+            사용자: 심심하다
+            AI:
+            기분 전환할 만한 곳 찾아보는 것도 좋죠 😊
+            원하시면 여행지나 데이트 코스도 추천해드릴게요!
+
+            사용자: 안녕
+            AI:
+            안녕하세요 😊
+            여행 일정이나 가볼 만한 장소 추천도 도와드릴 수 있어요!
+
+            사용자: 너 누구야?
+            AI:
+            저는 플랜B AI입니다 😊
+            여행 일정이나 장소 추천을 도와드리고 있어요!
+
+            사용자: 뭐 물어보면 돼?
+            AI:
+            예를 들면 이런 요청이 가능해요 😊
+            - 도쿄 3박 4일 여행 일정 짜줘
+            - 오사카 맛집 추천해줘
+            - 서울 데이트 코스 추천해줘
+
+                [이전 대화]
+                {conversation_history}
+
+                [현재 사용자 메시지]
+                {user_message}
+                """
+
             chat_response = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=f"""
-                너는 친근한 여행 AI다.
-
-                규칙:
-                - 자연스럽게 대화
-                - 답변은 1~2문장
-                - 너무 길게 말하지 말 것
-                - 여행 이야기로 자연스럽게 연결 가능
-                - 절대 JSON 출력 금지
-                - 절대 markdown 출력 금지
-
-                사용자:
-                {user_message}
-                """,
-                config={
-                    "temperature": 0.7,
-                    "max_output_tokens": 300
-                }
+                contents=chat_prompt
             )
 
-            chat_content = (
-                chat_response.text.strip()
-                if getattr(chat_response, "text", None)
-                else "좋아요"
-            )
+            chat_content = chat_response.text
 
             chat_msg_res = supabase.table("chat_messages").insert({
                 "session_id": session_id,
@@ -941,7 +949,6 @@ async def generate_itinerary(request: ChatRequest):
                 "planName": None,
                 "planDate": None,
                 "planContent": chat_content,
-                "weather": "",
                 "planPlaces": []
             }
 
@@ -1109,8 +1116,7 @@ async def generate_itinerary(request: ChatRequest):
             contents=full_prompt,
             config={
                 "temperature": 0.2,
-                "max_output_tokens": 12000,
-                "response_mime_type": "application/json"
+                "max_output_tokens": 12000
             }
         )
 
