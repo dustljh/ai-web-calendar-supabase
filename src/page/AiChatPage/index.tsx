@@ -32,8 +32,7 @@ function AiCalendar() {
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selectedPlaces, setSelectedPlaces] = useState<Aiplace[]>([]);
-  const [selectedMessageId, setSelectedMessageId] =
-    useState<string>();
+  const [selectedMessageId, setSelectedMessageId] = useState<string>();
   const [routeInfos, setRouteInfos] = useState<
     {
       from: string;
@@ -47,6 +46,7 @@ function AiCalendar() {
     }[]
   >([]);
   const [showMap, setShowMap] = useState(true);
+  const prevMessageLengthRef = useRef(0);
 
   const mySessions = useMemo(() => {
     return sessions.filter(
@@ -66,14 +66,23 @@ function AiCalendar() {
     return currentSession?.messages ?? [];
   }, [currentSession]);
 
-  // 자동 스크롤
   useEffect(() => {
     if (!scrollRef.current) return;
 
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const prevLength = prevMessageLengthRef.current;
+    const currentLength = currentMessages.length;
+
+    if (currentLength > prevLength) {
+      const lastMessage = currentMessages[currentMessages.length - 1];
+
+      if (lastMessage?.role === "user") {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    }
+
+    prevMessageLengthRef.current = currentLength;
   }, [currentMessages]);
 
-  // 현재 세션 마지막 장소 자동 표시
   useEffect(() => {
 
     const latestMessage = [...currentMessages]
