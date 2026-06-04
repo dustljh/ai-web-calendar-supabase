@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "react-router-dom";
 import { Field, FieldGroup, FieldLabel, FieldSet, Input } from "@/components/ui/index";
 import { useAuthStore } from "@/storage/User";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 //로그인 스키마 정의 (email 형식 및 비밀번호 자릿수 확인)
@@ -18,6 +18,8 @@ type LoginFormValues = z.infer<typeof formSchema>;
 function SignIn() {
   const navigate = useNavigate();
   const setUser = useAuthStore((state) => state.setUser);
+
+  const [isLoading, setIsLoading] = useState(false);
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(formSchema),
@@ -37,6 +39,12 @@ function SignIn() {
 
   //로그인 제출 함수
   const handleSignIn = async (data: LoginFormValues) => {
+
+    if (isLoading) {
+      return;
+    }
+    setIsLoading(true);
+
     try {
       const response = await fetch("https://ai-web-calendar-supabase.onrender.com/login", {
         method: "POST",
@@ -64,6 +72,10 @@ function SignIn() {
     } catch (error) {
       toast.error("서버 연결 실패");
     }
+    finally {
+      setIsLoading(false);
+    }
+
   };
 
   return (
@@ -120,13 +132,16 @@ function SignIn() {
 
             <button
               type="submit"
-              className="mt-8 w-full bg-[#10B981] hover:bg-[#059669] active:scale-[0.98] text-white py-3 rounded-lg font-bold transition-all shadow-lg shadow-[#10B981]/20"
+              disabled={isLoading}
+              className="mt-8 w-full bg-[#10B981] hover:bg-[#059669]
+                disabled:bg-gray-400
+                disabled:cursor-not-allowed
+                active:scale-[0.98] text-white py-3 rounded-lg font-bold transition-all shadow-lg shadow-[#10B981]/20"
             >
-              로그인
+              {isLoading ? "서버 연결 중..." : "로그인"}
             </button>
           </FieldSet>
 
-          {/* 추가: 회원가입 유도 */}
           <div className="mt-6 text-center text-sm text-gray-500">
             아직 계정이 없으신가요? <a href="#" className="text-[#10B981] hover:underline" onClick={() => { navigate("/sign-up") }}>회원가입</a>
           </div>

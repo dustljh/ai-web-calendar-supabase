@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Field, FieldGroup, FieldLabel, FieldSet, Input } from "@/components/ui/index";
 import { useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 //로그인 스키마 정의 (email 형식 및 비밀번호 자릿수 확인)
@@ -12,15 +12,16 @@ const formSchema = z.object({
   password: z.string().min(8, "비밀번호는 최소 8자 이상이어야 합니다."),
   confirmPassword: z.string().min(8, "비밀번호 확인을 입력해주세요."),
 })
-.refine((data) => data.password === data.confirmPassword, {
-  message: "비밀번호가 일치하지 않습니다.",
-  path: ["confirmPassword"],
-});
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "비밀번호가 일치하지 않습니다.",
+    path: ["confirmPassword"],
+  });
 
 type SignUpFormValues = z.infer<typeof formSchema>;
 
 function SignUp() {
   const navigate = useNavigate();
+  const [isLoading, setIsLoading] = useState(false);
 
   const form = useForm<SignUpFormValues>({
     resolver: zodResolver(formSchema),
@@ -40,6 +41,12 @@ function SignUp() {
   }, []);
 
   const handleSignUp = async (data: SignUpFormValues) => {
+
+    if (isLoading) {
+      return;
+    }
+    setIsLoading(true);
+
     try {
       const response = await fetch("https://ai-web-calendar-supabase.onrender.com/save-user", {
         method: "POST",
@@ -61,6 +68,9 @@ function SignUp() {
     } catch (error) {
       console.error("연결 에러: ", error);
       toast.error("서버와 연결할 수 없습니다.");
+    }
+    finally {
+      setIsLoading(false);
     }
   };
 
@@ -130,9 +140,13 @@ function SignUp() {
             {/* 메인 버튼 */}
             <button
               type="submit"
-              className="mt-8 w-full bg-[#10B981] hover:bg-[#059669] active:scale-[0.98] text-white py-3 rounded-lg font-bold transition-all shadow-lg shadow-[#10B981]/20"
+              disabled={isLoading}
+              className="mt-8 w-full bg-[#10B981] hover:bg-[#059669]
+                disabled:bg-gray-400
+                disabled:cursor-not-allowed
+                active:scale-[0.98] text-white py-3 rounded-lg font-bold transition-all shadow-lg shadow-[#10B981]/20"
             >
-              회원가입
+              {isLoading ? "서버 연결 중..." : "회원가입"}
             </button>
           </FieldSet>
 
